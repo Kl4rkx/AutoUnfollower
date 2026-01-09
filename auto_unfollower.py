@@ -102,10 +102,46 @@ class InstagramAutoUnfollower:
             pass
         return False
 
+    async def load_all_results(self, max_loops: int = 20, pause: float = 0.5) -> int:
+        """Hace scroll en la lista para cargar todos los usuarios del bookmarklet."""
+        container = await self.page.query_selector('.results-list')
+        if not container:
+            return 0
+
+        last_count = 0
+        stable_steps = 0
+
+        for _ in range(max_loops):
+            labels = await container.query_selector_all('label.result-item')
+            count = len(labels)
+
+            if count > last_count:
+                last_count = count
+                stable_steps = 0
+            else:
+                stable_steps += 1
+
+            # Si no cambia en 3 iteraciones seguidas, asumimos que ya cargó todo
+            if stable_steps >= 3:
+                break
+
+            # Scroll al fondo para forzar carga perezosa
+            try:
+                await container.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+            except:
+                pass
+
+            await asyncio.sleep(pause)
+
+        return last_count
+
     async def get_unfollowers_from_page(self) -> List[str]:
         """Extrae usuarios de la página actual"""
         try:
             await self.page.wait_for_selector('label.result-item', timeout=3000)
+
+            # Cargar todos los usuarios disponibles haciendo scroll en la lista
+            await self.load_all_results()
             
             results_list = await self.page.query_selector('.results-list')
             if not results_list:
