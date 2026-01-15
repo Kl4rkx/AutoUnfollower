@@ -7,9 +7,12 @@ Soporta 2FA - Comportamiento humanizado - Sin bloqueos
 import asyncio
 import random
 import sys
+import os
+from pathlib import Path
 from typing import List, Optional
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 import logging
+from typing import Set
 
 # Configurar encoding UTF-8 para Windows
 if sys.platform == 'win32':
@@ -27,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class InstagramAutoUnfollower:
-    def __init__(self, headless: bool = False, speed: str = "balanced"):
+    def __init__(self, headless: bool = False, speed: str = "balanced", user_data_dir: Optional[str] = None, whitelist_path: Optional[str] = None):
         self.headless = headless
         # Delays más realistas para evitar bloqueos
         self.speed_config = {
@@ -40,6 +43,14 @@ class InstagramAutoUnfollower:
         self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
         self.context: Optional[BrowserContext] = None
+        # Directorio de perfil persistente (evita re-login)
+        base_dir = Path(user_data_dir) if user_data_dir else Path.cwd() / "user_data"
+        self.user_data_dir: Path = base_dir
+        # Ruta de whitelist
+        self.whitelist_path: Path = Path(whitelist_path) if whitelist_path else (Path.cwd() / "whitelist.txt")
+        self.whitelist: Set[str] = set()
+        self._ensure_dirs()
+        self._load_whitelist()
 
     async def random_delay(self, base_delay: float, variance: float = 0.4):
         """Delay humanizado con varianza"""
@@ -48,32 +59,63 @@ class InstagramAutoUnfollower:
         await asyncio.sleep(max(delay, 0.1))
 
     async def init_browser(self):
-        """Inicializa navegador con anti-detección de bots"""
+        """Inicializa navegador con perfil persistente y anti-detección de bots"""
         self.playwright = await async_playwright().start()
-        
-        self.browser = await self.playwright.chromium.launch(
+
+        # Usar contexto persistente para guardar sesión (cookies/localStorage)
+        self.context = await self.playwright.chromium.launch_persistent_context(
+            user_data_dir=str(self.user_data_dir),
             headless=self.headless,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--disable-extensions",
                 "--disable-plugins",
-            ]
-        )
-        
-        self.context = await self.browser.new_context(
+            ],
             viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        
+
         self.page = await self.context.new_page()
-        
+
         # Anti-detección de automatización
         await self.page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {get: () => false});
         """)
-        
-        logger.info("[OK] Navegador iniciado")
+
+        logger.info(f"[OK] Navegador iniciado (perfil: {self.user_data_dir})")
+
+    def _ensure_dirs(self):
+        try:
+            self.user_data_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+    def _load_whitelist(self):
+        """Carga/crea whitelist.txt y guarda en memoria (en minúsculas)."""
+        wl: Set[str] = set()
+        if not self.whitelist_path.exists():
+            try:
+                default = (
+                    "# Lista blanca de usuarios (uno por línea)\n"
+                    "# Cualquier nombre aquí NO será desfolloweado.\n"
+                    "# Ejemplo:\n"
+                    "# elonmusk\n# nasa\n"
+                )
+                self.whitelist_path.write_text(default, encoding="utf-8")
+                logger.info(f"[OK] Creada whitelist en {self.whitelist_path}")
+            except Exception:
+                pass
+        else:
+            try:
+                for line in self.whitelist_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    wl.add(line.lower())
+            except Exception:
+                pass
+        self.whitelist = wl
 
     async def handle_2fa(self):
         """Maneja autenticación de 2 factores si es necesaria"""
@@ -382,6 +424,13 @@ class InstagramAutoUnfollower:
                 logger.info(f"{'='*60}")
                 
                 unfollowers = await self.get_unfollowers_from_page()
+                # Aplicar whitelist si existe
+                if self.whitelist:
+                    before = len(unfollowers)
+                    unfollowers = [u for u in unfollowers if u.lower() not in self.whitelist]
+                    skipped = before - len(unfollowers)
+                    if skipped > 0:
+                        logger.info(f"[WHITELIST] {skipped} usuarios omitidos por whitelist")
                 
                 if not unfollowers:
                     break

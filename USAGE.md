@@ -23,6 +23,8 @@ Si no estás logeado, Instagram te pedirá:
 - Contraseña
 - **Si tienes 2FA**: El script pausará automáticamente y te pedirá el código
 
+Tu sesión queda guardada en `./user_data`, por lo que en próximas ejecuciones normalmente no tendrás que volver a iniciar sesión.
+
 ## Paso 4: Ejecutar el Bookmarklet
 
 1. En la ventana de Chrome, ve a: **Perfil → Siguiendo**
@@ -65,6 +67,10 @@ Presiona `Ctrl + C` en la terminal para detener.
 ## Configuración Avanzada
 
 Ver [SETUP.md](SETUP.md) para opciones de velocidad y límites.
+
+### Whitelist persistente
+
+Se crea automáticamente `whitelist.txt` en la carpeta del proyecto. Escribe allí, uno por línea, los usuarios que deban ser omitidos (no se les hará unfollow).
 
 ## 2FA (Autenticación de Dos Factores)
 

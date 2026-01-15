@@ -1,0 +1,5 @@
+# Lista blanca de usuarios (uno por línea)
+# Cualquier nombre aquí NO será desfolloweado.
+# Ejemplo:
+# elonmusk
+# nasa

@@ -13,6 +13,8 @@ Script automatizado para dejar de seguir usuarios que no te siguen, usando el bo
 - ✅ Detección automática de páginas
 - ✅ Compatible con cuentas pequeñas y grandes
 - ✅ Soporte español/inglés
+- ✅ Sesión persistente (no repetir login)
+- ✅ Whitelist persistente con `whitelist.txt`
 
 ## Instalación
 
@@ -51,6 +53,20 @@ MAX_UNFOLLOWS = None      # None = sin límite
 | safe | 1.8s | 15-20 min |
 
 **Recomendado**: "balanced" para evitar bloqueos.
+
+## Persistencia de sesión (sin re-login)
+
+El script usa un perfil persistente de Playwright en `./user_data`. Tras el primer login, tu sesión queda guardada y no tendrás que iniciar sesión cada vez (a menos que Instagram cierre la sesión por seguridad).
+
+## Whitelist persistente
+
+Al ejecutar por primera vez, se creará `whitelist.txt` en la raíz del proyecto. Añade ahí, uno por línea, los usuarios que NO quieres dejar de seguir. Ejemplo:
+
+```
+# Lista blanca (uno por línea)
+elonmusk
+nasa
+```
 
 ## 2FA
 
