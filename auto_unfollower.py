@@ -1,6 +1,7 @@
 """
-Enhanced Instagram Auto-Unfollower v2.1
+Enhanced Instagram Auto-Unfollower v3.0
 Script ultra-rápido para dejar de seguir usuarios
+Incluye: Unfollow normal + Cancelar solicitudes pendientes
 Soporta 2FA - Comportamiento humanizado - Sin bloqueos
 """
 
@@ -8,11 +9,11 @@ import asyncio
 import random
 import sys
 import os
+import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set, Tuple
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 import logging
-from typing import Set
 
 # Configurar encoding UTF-8 para Windows
 if sys.platform == 'win32':
@@ -29,6 +30,47 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# UTILIDADES PARA PARSEAR HTML DE SOLICITUDES PENDIENTES
+# ============================================================
+
+def parse_pending_requests_html(html_path: Path) -> List[str]:
+    """
+    Parsea el archivo HTML exportado de Instagram para extraer
+    los enlaces de perfiles con solicitudes pendientes.
+    No requiere BeautifulSoup - usa regex simple.
+    """
+    if not html_path.exists():
+        logger.error(f"[ERROR] No se encontró el archivo: {html_path}")
+        return []
+    
+    try:
+        content = html_path.read_text(encoding='utf-8')
+        
+        # Buscar todos los enlaces de Instagram
+        # Patrón: href="https://www.instagram.com/username" o similar
+        pattern = r'href="(https?://(?:www\.)?instagram\.com/([^/"]+))"'
+        matches = re.findall(pattern, content)
+        
+        # Extraer usernames únicos (evitar duplicados)
+        usernames = []
+        seen = set()
+        
+        for full_url, username in matches:
+            # Filtrar enlaces que no son perfiles (como /p/, /reel/, etc.)
+            if username and username not in seen:
+                # Excluir rutas especiales de Instagram
+                if username not in ['p', 'reel', 'stories', 'explore', 'accounts', 'direct', 'tv']:
+                    usernames.append(username)
+                    seen.add(username)
+        
+        return usernames
+    
+    except Exception as e:
+        logger.error(f"[ERROR] Error al parsear HTML: {e}")
+        return []
+
+
 class InstagramAutoUnfollower:
     def __init__(self, headless: bool = False, speed: str = "balanced", user_data_dir: Optional[str] = None, whitelist_path: Optional[str] = None):
         self.headless = headless
@@ -39,15 +81,18 @@ class InstagramAutoUnfollower:
             "safe": {"click": 1.8, "scroll": 0.7, "page": 4, "action": 3}
         }
         self.delays = self.speed_config.get(speed, self.speed_config["balanced"])
-        self.stats = {"total": 0, "unfollowed": 0, "failed": 0, "pages": 0}
+        self.stats = {"total": 0, "unfollowed": 0, "failed": 0, "pages": 0, "pending_cancelled": 0}
         self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
         self.context: Optional[BrowserContext] = None
+        self.playwright = None
         # Directorio de perfil persistente (evita re-login)
         base_dir = Path(user_data_dir) if user_data_dir else Path.cwd() / "user_data"
         self.user_data_dir: Path = base_dir
         # Ruta de whitelist
         self.whitelist_path: Path = Path(whitelist_path) if whitelist_path else (Path.cwd() / "whitelist.txt")
+        # Ruta del archivo de solicitudes pendientes
+        self.pending_requests_path: Path = Path.cwd() / "pending_follow_requests.html"
         self.whitelist: Set[str] = set()
         self._ensure_dirs()
         self._load_whitelist()
@@ -279,6 +324,180 @@ class InstagramAutoUnfollower:
             if profile_page:
                 await profile_page.close()
 
+    async def cancel_pending_request(self, username: str) -> bool:
+        """Cancela una solicitud de seguimiento pendiente"""
+        profile_page = None
+        try:
+            profile_page = await self.context.new_page()
+            await profile_page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded", timeout=10000)
+            await self.random_delay(self.delays["action"])
+            
+            # Buscar botón "Solicitado", "Pendiente", "Requested" o "Cancel Request"
+            # El botón puede tener diferentes textos dependiendo del idioma
+            pending_btn = profile_page.locator(
+                'button:has-text("Solicitado"), '
+                'button:has-text("Pendiente"), '
+                'button:has-text("Requested"), '
+                'button:has-text("Solicitud enviada"), '
+                'button:has(div:has-text("Solicitado")), '
+                'button:has(div:has-text("Requested")), '
+                'button:has(div:has-text("Pendiente"))'
+            ).first
+            
+            if await pending_btn.is_visible(timeout=3000):
+                await pending_btn.scroll_into_view_if_needed()
+                await self.random_delay(self.delays["click"])
+                await pending_btn.click()
+                await self.random_delay(self.delays["click"])
+                
+                # Buscar opción "Dejar de seguir" o "Cancel request" en el menú
+                try:
+                    cancel_confirm = profile_page.locator(
+                        'button:has-text("Dejar de seguir"), '
+                        'button:has-text("Unfollow"), '
+                        'button:has-text("Cancelar"), '
+                        'button:has-text("Cancel"), '
+                        'span:text-is("Dejar de seguir"), '
+                        'span:text-is("Unfollow"), '
+                        'span:text-is("Cancelar")'
+                    ).first
+                    
+                    if await cancel_confirm.is_visible(timeout=2000):
+                        await cancel_confirm.click()
+                        await self.random_delay(2)
+                        
+                        # Verificar que el botón cambió a "Seguir" o "Follow"
+                        try:
+                            await profile_page.wait_for_selector(
+                                'button:has-text("Seguir"), button:has-text("Follow"), '
+                                'button:has(div:has-text("Seguir")), button:has(div:has-text("Follow"))',
+                                timeout=8000
+                            )
+                            logger.info(f"[CANCELADA] @{username}")
+                            await self.random_delay(1)
+                            return True
+                        except:
+                            logger.warning(f"[SKIP] @{username} - No cambió a 'Seguir'")
+                            return False
+                except:
+                    pass
+            
+            # Verificar si el usuario ya no tiene solicitud pendiente (ya sigue o fue rechazado)
+            follow_btn = profile_page.locator(
+                'button:has-text("Seguir"), button:has-text("Follow")'
+            ).first
+            
+            if await follow_btn.is_visible(timeout=1000):
+                logger.info(f"[YA CANCELADA] @{username} - No había solicitud pendiente")
+                return True
+            
+            # Verificar si ya lo sigues (botón "Siguiendo")
+            following_btn = profile_page.locator(
+                'button:has-text("Siguiendo"), button:has-text("Following")'
+            ).first
+            
+            if await following_btn.is_visible(timeout=1000):
+                logger.info(f"[YA SIGUE] @{username} - La solicitud fue aceptada")
+                return True
+            
+            logger.warning(f"[SKIP] @{username} - No se encontró botón pendiente")
+            return False
+        
+        except asyncio.TimeoutError:
+            logger.warning(f"[TIMEOUT] @{username}")
+            return False
+        except Exception as e:
+            logger.error(f"[FAIL] @{username}: {e}")
+            return False
+        finally:
+            if profile_page:
+                await profile_page.close()
+
+    async def run_cancel_pending_requests(self, max_cancels: int = None):
+        """Ejecuta la cancelación de solicitudes pendientes desde el archivo HTML"""
+        try:
+            await self.init_browser()
+            
+            # Verificar que existe el archivo HTML
+            if not self.pending_requests_path.exists():
+                logger.error(f"\n[ERROR] No se encontró el archivo: {self.pending_requests_path}")
+                logger.info("\nPara usar esta opción:")
+                logger.info("1. Ve a Instagram > Configuración > Tu actividad > Datos de Instagram")
+                logger.info("2. Descarga tus datos en formato HTML")
+                logger.info("3. Busca el archivo 'pending_follow_requests.html'")
+                logger.info("4. Cópialo a la carpeta del script")
+                return
+            
+            # Parsear el archivo HTML
+            usernames = parse_pending_requests_html(self.pending_requests_path)
+            
+            if not usernames:
+                logger.error("[ERROR] No se encontraron solicitudes pendientes en el archivo HTML")
+                return
+            
+            logger.info(f"\n[OK] Se encontraron {len(usernames)} solicitudes pendientes")
+            
+            # Aplicar whitelist
+            if self.whitelist:
+                before = len(usernames)
+                usernames = [u for u in usernames if u.lower() not in self.whitelist]
+                skipped = before - len(usernames)
+                if skipped > 0:
+                    logger.info(f"[WHITELIST] {skipped} usuarios omitidos por whitelist")
+            
+            # Ir a Instagram y esperar login manual
+            await self.page.goto("https://www.instagram.com/", wait_until="domcontentloaded")
+            await self.random_delay(2)
+            
+            # Verificar si necesita 2FA
+            await self.handle_2fa()
+            
+            # Verificar si está logueado
+            logger.info("\n" + "="*60)
+            logger.info("[VERIFICANDO LOGIN]")
+            logger.info("="*60)
+            logger.info("\nAsegúrate de estar logueado en Instagram.")
+            logger.info("Presiona Enter cuando estés listo para continuar...")
+            input()
+            
+            logger.info(f"\n[INICIANDO] Cancelando {len(usernames)} solicitudes pendientes...\n")
+            
+            for i, username in enumerate(usernames, 1):
+                if max_cancels and self.stats["pending_cancelled"] >= max_cancels:
+                    logger.info(f"\n[LIMITE] Alcanzado el límite de {max_cancels} cancelaciones")
+                    break
+                
+                self.stats["total"] += 1
+                print(f"[{i}/{len(usernames)}] Procesando @{username}...", end=" ", flush=True)
+                
+                success = await self.cancel_pending_request(username)
+                if success:
+                    self.stats["pending_cancelled"] += 1
+                    print("[OK]")
+                else:
+                    self.stats["failed"] += 1
+                    print("[FAIL]")
+                
+                await self.random_delay(self.delays["action"], variance=0.6)
+        
+        except KeyboardInterrupt:
+            logger.info("\n[CANCEL] Cancelado por usuario")
+        except Exception as e:
+            logger.error(f"[ERROR] {e}")
+        finally:
+            await self.close()
+            self.print_stats_pending()
+
+    def print_stats_pending(self):
+        """Muestra estadísticas de cancelación de solicitudes pendientes"""
+        logger.info(f"\n{'='*60}")
+        logger.info("[ESTADÍSTICAS - SOLICITUDES PENDIENTES]")
+        logger.info(f"{'='*60}")
+        logger.info(f"Total procesadas: {self.stats['total']}")
+        logger.info(f"Canceladas: {self.stats['pending_cancelled']}")
+        logger.info(f"Fallos: {self.stats['failed']}")
+        logger.info(f"{'='*60}\n")
+
     async def handle_pagination(self) -> bool:
         """Detecta y cambia a siguiente página leyendo el contador de páginas"""
         try:
@@ -475,6 +694,7 @@ class InstagramAutoUnfollower:
                 await self.context.close()
             if self.browser:
                 await self.browser.close()
+            if self.playwright:
                 await self.playwright.stop()
             logger.info("Navegador cerrado")
         except Exception as e:
@@ -493,18 +713,110 @@ class InstagramAutoUnfollower:
         logger.info(f"{'='*60}\n")
 
 
-async def main():
-    # CONFIGURACIÓN
-    SPEED = "balanced"        # "fast", "balanced" o "safe"
-    HEADLESS = False          # True = sin ventana visible
-    MAX_UNFOLLOWS = None      # None = sin límite
+def show_menu() -> int:
+    """Muestra el menú principal y retorna la opción seleccionada"""
+    print("\n" + "="*60)
+    print("   INSTAGRAM AUTO-UNFOLLOWER v3.0")
+    print("="*60)
+    print("\n¿Qué deseas hacer?\n")
+    print("  [1] Dejar de seguir usuarios (con bookmarklet)")
+    print("      → Usa el bookmarklet para detectar quién no te sigue")
+    print()
+    print("  [2] Cancelar solicitudes de seguimiento pendientes")
+    print("      → Cancela solicitudes enviadas desde archivo HTML")
+    print()
+    print("  [3] Salir")
+    print()
+    print("="*60)
     
-    unfollower = InstagramAutoUnfollower(headless=HEADLESS, speed=SPEED)
+    while True:
+        try:
+            choice = input("\nSelecciona una opción (1-3): ").strip()
+            if choice in ['1', '2', '3']:
+                return int(choice)
+            print("[ERROR] Por favor, ingresa 1, 2 o 3")
+        except ValueError:
+            print("[ERROR] Por favor, ingresa un número válido")
+        except KeyboardInterrupt:
+            return 3
+
+
+def get_speed_config() -> str:
+    """Permite al usuario seleccionar la velocidad"""
+    print("\n" + "-"*40)
+    print("Selecciona la velocidad:\n")
+    print("  [1] Fast    - Rápido (más riesgo de bloqueo)")
+    print("  [2] Balanced - Equilibrado (recomendado)")
+    print("  [3] Safe    - Seguro (más lento, menos riesgo)")
+    print("-"*40)
+    
+    speed_map = {'1': 'fast', '2': 'balanced', '3': 'safe'}
+    
+    while True:
+        try:
+            choice = input("\nSelecciona velocidad (1-3) [2]: ").strip() or '2'
+            if choice in speed_map:
+                return speed_map[choice]
+            print("[ERROR] Por favor, ingresa 1, 2 o 3")
+        except KeyboardInterrupt:
+            return 'balanced'
+
+
+def get_max_count(action_type: str) -> Optional[int]:
+    """Permite al usuario establecer un límite máximo"""
+    print(f"\n¿Cuántos usuarios quieres {action_type}?")
+    print("  - Escribe un número para establecer un límite")
+    print("  - Presiona Enter para sin límite")
+    
+    while True:
+        try:
+            value = input("\nMáximo [sin límite]: ").strip()
+            if not value:
+                return None
+            num = int(value)
+            if num > 0:
+                return num
+            print("[ERROR] El número debe ser mayor a 0")
+        except ValueError:
+            print("[ERROR] Por favor, ingresa un número válido")
+        except KeyboardInterrupt:
+            return None
+
+
+async def main():
+    """Función principal con menú interactivo"""
+    
+    choice = show_menu()
+    
+    if choice == 3:
+        print("\n¡Hasta luego!")
+        return
+    
+    # Configuración común
+    speed = get_speed_config()
+    headless = False  # Siempre visible para poder hacer login
+    
+    unfollower = InstagramAutoUnfollower(headless=headless, speed=speed)
     
     try:
-        await unfollower.run(max_unfollows=MAX_UNFOLLOWS)
+        if choice == 1:
+            # Opción 1: Unfollow normal con bookmarklet
+            max_unfollows = get_max_count("dejar de seguir")
+            print(f"\n[CONFIG] Velocidad: {speed}")
+            print(f"[CONFIG] Límite: {max_unfollows if max_unfollows else 'Sin límite'}")
+            print("\nIniciando...\n")
+            await unfollower.run(max_unfollows=max_unfollows)
+            
+        elif choice == 2:
+            # Opción 2: Cancelar solicitudes pendientes
+            max_cancels = get_max_count("cancelar")
+            print(f"\n[CONFIG] Velocidad: {speed}")
+            print(f"[CONFIG] Límite: {max_cancels if max_cancels else 'Sin límite'}")
+            print("\nIniciando...\n")
+            await unfollower.run_cancel_pending_requests(max_cancels=max_cancels)
+            
     except KeyboardInterrupt:
-        pass
+        print("\n\n[CANCEL] Operación cancelada por el usuario")
 
 
 if __name__ == "__main__":
