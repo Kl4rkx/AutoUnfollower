@@ -188,7 +188,7 @@ Cancela todas las solicitudes de seguimiento que hayas enviado y aún estén pen
 
 1. Ve a **Instagram.com** → **Menú** (☰) → **Configuración y privacidad** → **Centro de descargas**
    
-   O ve directamente a: https://instagram.com/accounts/login/?next=/download/request/
+   O ve directamente a: https://accountscenter.instagram.com/info_and_permissions/dyi/
 
 2. Haz clic en **"Solicitar descarga"**
 
