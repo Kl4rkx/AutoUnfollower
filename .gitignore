@@ -1,2 +1,7 @@
 unfollower.log
 pending_follow_requests.html
+.venv
+__pycache__/
+build
+dist
+user_data

@@ -8,7 +8,6 @@ Script automatizado ultra-rápido para dejar de seguir usuarios que no te siguen
 
 - ✅ **Dejar de seguir automáticamente** usuarios no-seguidores mediante bookmarklet
 - ✅ **Cancelar solicitudes pendientes** desde archivo HTML exportado
-- ✅ **Soporte 2FA** (autenticación de dos factores)
 - ✅ **3 velocidades configurables** (Fast/Balanced/Safe) para evitar bloqueos
 - ✅ **Comportamiento humanizado** con delays variables y anti-detección
 - ✅ **Sesión persistente** - no necesita re-login cada vez
@@ -52,12 +51,12 @@ python --version
 
 #### Opción A: Con Git (recomendado)
 ```bash
-git clone https://github.com/tu-usuario/AutoUnfollower.git
+git clone https://github.com/Kl4rkx/AutoUnfollower.git
 cd AutoUnfollower
 ```
 
 #### Opción B: Descarga manual (sin Git)
-1. Ve a https://github.com/tu-usuario/AutoUnfollower
+1. Ve a https://github.com/Kl4rkx/AutoUnfollower.git
 2. Haz clic en **"Code"** → **"Download ZIP"**
 3. Extrae el archivo ZIP
 4. Abre una terminal en la carpeta extraída
@@ -134,15 +133,15 @@ Automatiza dejar de seguir a usuarios que **no te siguen**. Requiere usar un boo
 3. **Inicia sesión en Instagram** (si es la primera vez):
    - Se abrirá un navegador Chrome automáticamente
    - Inicia sesión con tu usuario y contraseña
-   - Si tienes 2FA, ingresa el código que recibas
 
 4. **Navega a tu perfil**:
-   - En Instagram, ve a **Perfil** → **Siguiendo**
+   - En Instagram, ve a **Perfil**
 
 5. **Ejecuta el bookmarklet**:
    - Abre tu navegador y ve a: https://instagram.dcastillo.dev/
-   - Haz clic en "**Enhanced Instagram Unfollowers**"
-   - Espera a que procese (verás una lista roja de usuarios que no te siguen)
+   - Arrastra el botón de Enhanced Instagram Unfollowers a tu barra de favoritos
+   - En tu perfil de Instagram, haz clic en el bookmarklet
+   - Ahora dale a run o ejecutalo.
 
 6. **Vuelve a la terminal**:
    - El script se activará automáticamente
@@ -186,30 +185,30 @@ Cancela todas las solicitudes de seguimiento que hayas enviado y aún estén pen
 
 #### Paso A: Descargar datos de Instagram
 
-1. Ve a **Instagram.com** → **Menú** (☰) → **Configuración y privacidad** → **Centro de descargas**
-   
-   O ve directamente a: https://accountscenter.instagram.com/info_and_permissions/dyi/
+### 1. Exporta tus solicitudes pendientes desde Instagram
 
-2. Haz clic en **"Solicitar descarga"**
+Para obtener el archivo `pending_follow_requests.html`, realiza lo siguiente:
 
-3. Selecciona:
-   - Formato: **HTML** ✓
-   - Rango de fechas: **Todos los datos** ✓
+- Ve al [Centro de cuentas de Instagram](https://accountscenter.instagram.com/?theme=dark&entry_point=app_settings)  
+- Accede a [Tu información y permisos](https://accountscenter.instagram.com/info_and_permissions/?theme=dark)  
+- Haz clic en **[Exportar tu información](https://accountscenter.instagram.com/info_and_permissions/dyi/)**
+- Pulsa **Crear exportación**
+- Selecciona tu cuenta de Instagram
+- Elige **Exportar al dispositivo**
+- En **Personalizar información**, desmarca todo excepto:
+  - En el apartado **Conexiones**, selecciona solo la casilla de **Seguidores y seguidos**
+- Guarda la configuración
+- En **Intervalo de fechas**, selecciona **Desde el principio**
+- Inicia la exportación
 
-4. Haz clic en **"Siguiente"**
+📧 En unos minutos recibirás un correo de Meta con el enlace para descargar tu información.
 
-5. Instagram te enviará un email cuando los datos estén listos (puede tardar horas o días)
+Una vez descargado el archivo ZIP:
 
-6. **Una vez recibas el email**:
-   - Descarga el archivo ZIP
-   - Extráelo
-   - Busca la carpeta: `instagram-account-klark-20XX-XX-XX/`
-   - Dentro, busca: `requests_sent.html` o `pending_follow_requests.html`
+- Ve a la carpeta `connections/followers_and_following/`
+- Copia el archivo `pending_follow_requests.html` a la misma carpeta donde está tu script `auto_unfollower.py`
 
-#### Paso B: Preparar el archivo
-
-1. Copia el archivo HTML a la carpeta del script
-2. Renómbralo como: **`pending_follow_requests.html`** (importante el nombre exacto)
+---
 
 #### Paso C: Ejecutar el script
 
@@ -249,6 +248,9 @@ Cancela todas las solicitudes de seguimiento que hayas enviado y aún estén pen
 
 Crea un archivo `whitelist.txt` en la carpeta del script para proteger ciertas cuentas de dejar de seguir.
 
+**Aunque también funciona con la whitelist del [Bookmarklet](https://github.com/Kl4rkx/EnhancedInstagramUnfollowers?tab=readme-ov-file#%EF%B8%8F-desktop-usage).**
+
+
 ### Cómo hacerlo:
 
 1. En la carpeta del script, abre (o crea) el archivo: **`whitelist.txt`**
@@ -273,22 +275,6 @@ cristiano
 
 ---
 
-## 🔐 Autenticación de Dos Factores (2FA)
-
-Si tienes 2FA activado en tu cuenta de Instagram:
-
-1. El script pausará automáticamente
-2. Se abrirá un navegador Chrome
-3. Instagram te pedirá el código (SMS, app, etc.)
-4. Ingresa el código en la **terminal** cuando se te pida:
-   ```
-   Ingresa el codigo de autenticacion: 123456
-   ```
-5. Presiona **Enter**
-6. El script continuará automáticamente
-
----
-
 ## 💾 Sesión Persistente (Sin re-login cada vez)
 
 Cuando ejecutas el script por primera vez:
@@ -298,6 +284,7 @@ Cuando ejecutas el script por primera vez:
 - La sesión persiste hasta que Instagram cierre tu sesión (por seguridad)
 
 ### Para limpiar la sesión:
+Borrar la carpeta de user_data o:
 ```bash
 # En Windows PowerShell o CMD:
 rmdir /s user_data
@@ -431,4 +418,4 @@ Uso personal. No intentes revender ni falsificar autoría.
 
 ---
 
-**Última actualización**: Enero 2024 | v3.0
+**Última actualización**: Febrero 2026 | v3.0
