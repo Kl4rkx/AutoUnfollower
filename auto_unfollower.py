@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
-from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright.async_api import async_playwright, Page, BrowserContext
 import logging
 
 # Configurar encoding UTF-8 para Windows
@@ -74,6 +74,8 @@ def parse_pending_requests_html(html_path: Path) -> List[str]:
 class InstagramAutoUnfollower:
     def __init__(self, headless: bool = False, speed: str = "balanced", user_data_dir: Optional[str] = None, whitelist_path: Optional[str] = None):
         self.headless = headless
+        self.window_width = 1920
+        self.window_height = 1080
         # Delays más realistas para evitar bloqueos
         self.speed_config = {
             "fast": {"click": 0.8, "scroll": 0.3, "page": 2, "action": 1.5},
@@ -82,8 +84,8 @@ class InstagramAutoUnfollower:
         }
         self.delays = self.speed_config.get(speed, self.speed_config["balanced"])
         self.stats = {"total": 0, "unfollowed": 0, "failed": 0, "pages": 0, "pending_cancelled": 0}
-        self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
+        self.worker_page: Optional[Page] = None
         self.context: Optional[BrowserContext] = None
         self.playwright = None
         # Directorio de perfil persistente (evita re-login)
@@ -112,12 +114,16 @@ class InstagramAutoUnfollower:
             user_data_dir=str(self.user_data_dir),
             headless=self.headless,
             args=[
+                f"--window-size={self.window_width},{self.window_height}",
+                "--force-device-scale-factor=1",
+                "--high-dpi-support=1",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--disable-extensions",
                 "--disable-plugins",
+                "--disable-notifications",
             ],
-            viewport={"width": 1920, "height": 1080},
+            no_viewport=True,
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
 
@@ -129,6 +135,15 @@ class InstagramAutoUnfollower:
         """)
 
         logger.info(f"[OK] Navegador iniciado (perfil: {self.user_data_dir})")
+
+    async def _get_worker_page(self) -> Page:
+        """Reutiliza una sola pestaña para acciones de perfil y evita abrir/cerrar pestañas por usuario."""
+        if self.worker_page and not self.worker_page.is_closed():
+            return self.worker_page
+
+        self.worker_page = await self.context.new_page()
+        await self.worker_page.goto("about:blank", wait_until="domcontentloaded")
+        return self.worker_page
 
     def _ensure_dirs(self):
         try:
@@ -260,9 +275,8 @@ class InstagramAutoUnfollower:
 
     async def unfollow_user(self, username: str) -> bool:
         """Dejar de seguir a un usuario"""
-        profile_page = None
         try:
-            profile_page = await self.context.new_page()
+            profile_page = await self._get_worker_page()
             await profile_page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded", timeout=8000)
             await self.random_delay(self.delays["action"])
             
@@ -320,15 +334,11 @@ class InstagramAutoUnfollower:
         except Exception as e:
             logger.error(f"[FAIL] @{username}")
             return False
-        finally:
-            if profile_page:
-                await profile_page.close()
 
     async def cancel_pending_request(self, username: str) -> bool:
         """Cancela una solicitud de seguimiento pendiente"""
-        profile_page = None
         try:
-            profile_page = await self.context.new_page()
+            profile_page = await self._get_worker_page()
             await profile_page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded", timeout=10000)
             await self.random_delay(self.delays["action"])
             
@@ -409,9 +419,6 @@ class InstagramAutoUnfollower:
         except Exception as e:
             logger.error(f"[FAIL] @{username}: {e}")
             return False
-        finally:
-            if profile_page:
-                await profile_page.close()
 
     async def run_cancel_pending_requests(self, max_cancels: int = None):
         """Ejecuta la cancelación de solicitudes pendientes desde el archivo HTML"""
@@ -690,10 +697,10 @@ class InstagramAutoUnfollower:
     async def close(self):
         """Cierra navegador"""
         try:
+            if self.worker_page and not self.worker_page.is_closed():
+                await self.worker_page.close()
             if self.context:
                 await self.context.close()
-            if self.browser:
-                await self.browser.close()
             if self.playwright:
                 await self.playwright.stop()
             logger.info("Navegador cerrado")
